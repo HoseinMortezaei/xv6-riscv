@@ -849,3 +849,26 @@ procdump(void)
     printk("\n");
   }
 }
+
+#ifdef MLFQ
+// Increment wait_ticks for all RUNNABLE processes in queues 2 and 3,
+// promoting any process that has waited AGING_TICKS (800) ticks.
+void
+mlfq_aging(void)
+{
+  struct proc *p;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state == RUNNABLE && p->queue > 1) {
+      p->wait_ticks++;
+      if (p->wait_ticks >= AGING_TICKS) {
+        p->queue--;
+        p->wait_ticks = 0;
+        p->queue_enter_tick = ticks;
+      }
+    }
+    release(&p->lock);
+  }
+}
+#endif

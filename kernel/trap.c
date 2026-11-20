@@ -82,8 +82,24 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2)
+  if (which_dev == 2) {
+    #ifdef MLFQ
+    int should_yield = 0;
+    acquire(&p->lock);
+    if (p->queue == 1) {
+      p->quantum_ticks++;
+    if (p->quantum_ticks >= RR_QUANTUM) {
+      should_yield = 1;
+      }
+    }
+    release(&p->lock);
+    if (should_yield) {
+      yield();
+    }
+    #else
     yield();
+    #endif
+  }
 
   prepare_return();
 
@@ -154,8 +170,25 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if (which_dev == 2 && myproc() != 0)
-    yield();
+  if (which_dev == 2 && myproc() != 0){
+    #ifdef MLFQ
+      struct proc *p = myproc();
+      int should_yield = 0;
+      acquire(&p->lock);
+      if (p->state == RUNNING && p->queue == 1) {
+        p->quantum_ticks++;
+        if (p->quantum_ticks >= RR_QUANTUM) {
+          should_yield = 1;
+        }
+      }
+      release(&p->lock);
+      if (should_yield) {
+        yield();
+      }
+    #else
+      yield();
+    #endif
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
@@ -171,6 +204,10 @@ clockintr()
     ticks++;
     wakeup(&ticks);
     release(&tickslock);
+
+    #ifdef MLFQ
+    mlfq_aging();
+    #endif
   }
 
   // ask for the next timer interrupt. this also clears
