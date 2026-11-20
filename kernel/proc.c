@@ -441,6 +441,19 @@ kwait(uint64 addr)
   }
 }
 
+// LCG Random Number Generator For SJF in Queue 2
+#ifdef MLFQ
+static uint lcg_seed = 1;
+
+// Returns a pseudo-random integer in [0, 99]
+static int
+lcg_rand(void)
+{
+  lcg_seed = lcg_seed * 1664525u + 1013904223u;
+  return (int)((lcg_seed >> 16) % 100);
+}
+#endif
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -465,6 +478,103 @@ scheduler(void)
     intr_off();
 
     int found = 0;
+
+    // Logic for MLFQ
+    #ifdef MLFQ
+    static int rr_index = 0;
+    struct proc *chosen = 0;
+
+    // --- Queue 1: Round Robin (highest priority) ---
+    for (int i = 0; i < NPROC; i++) {
+      int idx = (rr_index + 1 + i) % NPROC;
+      p = &proc[idx];
+      acquire(&p->lock);
+      if (p->state == RUNNABLE && p->queue == 1) {
+        chosen = p;
+        rr_index = idx;
+        release(&p->lock);
+        break;
+      }
+      release(&p->lock);
+    }
+
+    // --- Queue 2: Probabilistic Shortest Job First (SJF) ---
+    if (chosen == 0) {
+      struct proc *q2[NPROC];
+      int q2_burst[NPROC];
+      int q2_conf[NPROC];
+      int count = 0;
+
+      // Snapshot all RUNNABLE processes in Queue 2
+      for (p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE && p->queue == 2) {
+          q2[count] = p;
+          q2_burst[count] = p->burst_time;
+          q2_conf[count] = p->confidence;
+          count++;
+        }
+        release(&p->lock);
+      }
+
+      // Insertion sort by burst_time ascending (shortest job first)
+      for (int i = 1; i < count; i++) {
+        struct proc *key_p = q2[i];
+        int key_b = q2_burst[i];
+        int key_c = q2_conf[i];
+        int j = i - 1;
+        while (j >= 0 && q2_burst[j] > key_b) {
+          q2[j + 1] = q2[j];
+          q2_burst[j + 1] = q2_burst[j];
+          q2_conf[j + 1] = q2_conf[j];
+          j--;
+        }
+        q2[j + 1] = key_p;
+        q2_burst[j + 1] = key_b;
+        q2_conf[j + 1] = key_c;
+      }
+
+      // Test confidence against LCG random number; last process always runs
+      for (int i = 0; i < count; i++) {
+        if (i == count - 1 || lcg_rand() <= q2_conf[i]) {
+          chosen = q2[i];
+          break;
+        }
+      }
+    }
+
+    // --- Queue 3: Non-preemptive FCFS (lowest priority) ---
+    if (chosen == 0) {
+      uint earliest_tick = 0xffffffff;
+      for (p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE && p->queue == 3) {
+          if (chosen == 0 || p->queue_enter_tick < earliest_tick) {
+            chosen = p;
+            earliest_tick = p->queue_enter_tick;
+          }
+        }
+        release(&p->lock);
+      }
+    }
+
+    // --- Dispatch chosen process safely (multicore-safe) ---
+    if (chosen != 0) {
+      acquire(&chosen->lock);
+      if (chosen->state == RUNNABLE) {
+        chosen->state = RUNNING;
+        chosen->wait_ticks = 0;
+        chosen->quantum_ticks = 0;
+        c->proc = chosen;
+        swtch(&c->context, &chosen->context);
+        c->proc = 0;
+        found = 1;
+      }
+      release(&chosen->lock);
+    }
+
+    #else
+
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
@@ -485,6 +595,9 @@ scheduler(void)
       }
       release(&p->lock);
     }
+
+    #endif
+
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
@@ -526,6 +639,13 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+
+  #ifdef MLFQ
+  p->wait_ticks = 0;
+  p->quantum_ticks = 0;
+  p->queue_enter_tick = ticks;
+  #endif
+  
   sched();
   release(&p->lock);
 }
@@ -611,6 +731,11 @@ wakeup(void *chan)
       // go to sleep, also set it back to RUNNING.
       if (p->state == SLEEPING) {
         p->state = RUNNABLE;
+        #ifdef MLFQ
+        p->wait_ticks = 0;
+        p->quantum_ticks = 0;
+        p->queue_enter_tick = ticks;
+        #endif
       }
     }
     release(&p->lock);
