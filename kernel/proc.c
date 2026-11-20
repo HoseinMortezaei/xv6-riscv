@@ -125,6 +125,15 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  #ifdef MLFQ
+  p->queue = 3;                 // All new processes start in Queue 3 (FCFS)
+  p->queue_enter_tick = ticks;  // Record entry tick for FCFS ordering
+  p->wait_ticks = 0;            // Time spent waiting in RUNNABLE state
+  p->quantum_ticks = 0;         // Ticks consumed in current time slice
+  p->burst_time = 2;            // Default estimated burst time for SJF
+  p->confidence = 50;           // Default confidence (0-100) for SJF
+  #endif
+
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
     freeproc(p);
@@ -168,6 +177,15 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  #ifdef MLFQ
+  p->queue = 0;
+  p->queue_enter_tick = 0;
+  p->wait_ticks = 0;
+  p->quantum_ticks = 0;
+  p->burst_time = 0;
+  p->confidence = 0;
+  #endif
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -226,6 +244,11 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+
+  #ifdef MLFQ
+  p->queue = 1;
+  p->queue_enter_tick = ticks;
+  #endif
 
   release(&p->lock);
 }

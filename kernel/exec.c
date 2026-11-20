@@ -128,7 +128,19 @@ kexec(char *path, char **argv)
     if (*s == '/')
       last = s + 1;
   safestrcpy(p->name, last, sizeof(p->name));
-
+  
+  #ifdef MLFQ
+  if (strncmp(p->name, "init", sizeof(p->name)) == 0 ||
+      strncmp(p->name, "sh", sizeof(p->name)) == 0) {
+    acquire(&p->lock);
+    p->queue = 1;
+    p->wait_ticks = 0;
+    p->quantum_ticks = 0;
+    p->queue_enter_tick = ticks;
+    release(&p->lock);
+  }
+  #endif
+  
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
