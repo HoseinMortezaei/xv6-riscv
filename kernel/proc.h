@@ -77,6 +77,8 @@ struct trapframe {
 };
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+#define RR_QUANTUM 5
+#define AGING_TICKS 800
 
 // Per-process state
 struct proc {
@@ -89,6 +91,14 @@ struct proc {
   int xstate;           // Exit status to be returned to parent's wait
   int pid;              // Process ID
 
+  // MLFQ scheduling fields (protected by p->lock):
+  int queue;                   // Current queue: 1 (RR), 2 (SJF), or 3 (FCFS)
+  uint queue_enter_tick;       // Global tick when process entered current queue
+  int wait_ticks;              // Ticks spent waiting in RUNNABLE state
+  int quantum_ticks;           // Ticks used in current quantum slice
+  int burst_time;              // Estimated burst time for Queue 2 SJF (default 2)
+  int confidence;              // Confidence 0-100 for Queue 2 SJF (default 50)
+  
   // wait_lock must be held when using this:
   struct proc *parent; // Parent process
 
