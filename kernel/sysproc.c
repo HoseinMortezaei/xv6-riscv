@@ -110,3 +110,25 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_setsjf(void)
+{
+#ifdef MLFQ
+  int burst, conf;
+  argint(0, &burst);
+  argint(1, &conf);
+
+  if (burst <= 0 || conf < 0 || conf > 100)
+    return -1;
+
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  p->burst_time = burst;
+  p->confidence = conf;
+  release(&p->lock);
+  return 0;
+#else
+  return -1;
+#endif
+}
