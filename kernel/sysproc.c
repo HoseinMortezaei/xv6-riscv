@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
+#include "pinfo.h"
 
 uint64
 sys_exit(void)
@@ -109,4 +110,16 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int
+sys_getprocs(void)
+{
+  uint64 uaddr;
+  int max;
+
+  argaddr(0, &uaddr);
+  argint(1, &max);
+
+  return getprocss(uaddr, max);
 }
